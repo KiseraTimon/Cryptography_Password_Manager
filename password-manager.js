@@ -234,6 +234,46 @@ class Keychain {
 
 		return { tagB64, record };
 	}
+
+
+	/*
+	Internal Helper VI:
+	* Decrypts a record for a given domain.
+	* Recomputes HMAC(domain) and uses it as AAD.
+	* If a swap/tamper attack happened, AES-GCM auth will fail
+	*/
+	async decryptForDomain(name, record) {
+		if (!this.secrets.aesKey) {
+			throw new Error("AES key not initialized");
+		}
+
+		const tagB64 = await this.domainToTag(name);
+		const tagBuf = decodeBuffer(tagB64);
+
+		const ivBuf = decodeBuffer(record.iv);
+		const ciphertextBuf = decodeBuffer(record.ciphertext);
+
+		let plaintextBuf;
+		try {
+			plaintextBuf = await subtle.decrypt(
+				{
+					name: "AES-GCM",
+					iv: ivBuf,
+					additionalData: tagBuf,
+					tagLength: 128
+				},
+				this.secrets.aesKey,
+				ciphertextBuf
+			);
+
+		} catch (e) {
+			// Indicating a swap attack or tampered ciphertext/IV
+			throw new Error("Possible tampering detected (swap or modified record)");
+		}
+
+		const padded = bufferToString(plaintextBuf);
+		return this.unpadPassword(padded);
+	}
 };
 
 module.exports = { Keychain }
