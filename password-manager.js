@@ -136,6 +136,21 @@ class Keychain {
 
 		return this.data.kvs;
 	}
+
+	/*
+	Internal Helper II:
+	* Pads a password to a fixed length of 64 characters to avoid leaking password lengths
+	* We will use null characters and strip them back off after decryption
+	*/
+	padPassword(value) {
+		const maxLen = MAX_PASSWORD_LENGTH;
+
+		if (value.length > maxLen) {
+			throw new Error("Password has exceeded the max allowed")
+		}
+
+		return value.padEnd(maxLen, "\0");
+	}
 };
 
 module.exports = { Keychain }
