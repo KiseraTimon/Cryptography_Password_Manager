@@ -119,6 +119,23 @@ class Keychain {
 	async remove(name) {
 		throw "Not Implemented!";
 	};
+
+	/*
+	Internal Helper I:
+	* Ensures the KVS object exists and is stored in a serializable location
+	* It should map data
+	*  from:
+	*    Base64(HMAC(domain))
+	*  to:
+	*    { iv: <Base64>, ciphertext: <Base64> }
+	*/
+	getKvs() {
+		if (!this.data.kvs) {
+			this.data.kvs = {};
+		}
+
+		return this.data.kvs;
+	}
 };
 
 module.exports = { Keychain }
