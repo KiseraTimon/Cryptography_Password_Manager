@@ -24,13 +24,18 @@ class Keychain {
 		this.data = {
 			/* Store member variables that you intend to be public here
 			   (i.e. information that will not compromise security if an adversary sees) */
+			   kvs:{},
+               salt: encodeBuffer(salt)
 		};
 		this.secrets = {
 			/* Store member variables that you intend to be private here
 			   (information that an adversary should NOT see). */
+			 masterPassword: password,
+             masterKey: masterKey,
+             hmacKey: hmacKey,
+             aesKey: aesKey
 		};
 
-		throw "Not Implemented!";
 	};
 
 	/** 
@@ -40,8 +45,86 @@ class Keychain {
 	  *   password: string
 	  * Return Type: void
 	  */
+	 static async _deriveKeysFromPassword(password, salt) {
+  /*1. Import raw password as PBKDF2 input key */
+    if (typeof password !== "string") throw new TypeError("password must be a string");
+    if (!(salt instanceof Uint8Array)) throw new TypeError("salt must be a Uint8Array");
+
+  const passwordKey = await subtle.importKey(
+    "raw",
+    stringToBuffer(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  // 2. Derive master HMAC key using PBKDF2
+  const masterKey = await subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256"
+    },
+    passwordKey,
+    { name: "HMAC", hash: "SHA-256", length: 256 },
+    true,
+    ["sign"]
+  );
+
+  // 3. Derive HMAC subkey
+  const hmacKeyBytes = await subtle.sign(
+    "HMAC",
+    masterKey,
+    stringToBuffer("hmac-key-destination")
+  );
+
+  const hmacKey = await subtle.importKey(
+    "raw",
+    hmacKeyBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    true,
+    ["sign", "verify"]
+  );
+
+  // 4. Derive AES-GCM subkey
+  const aesKeyBytes = await subtle.sign(
+    "HMAC",
+    masterKey,
+    stringToBuffer("aes-key-destination")
+  );
+
+  const aesKey = await subtle.importKey(
+    "raw",
+    aesKeyBytes,
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"]
+  );
+
+  return { masterKey, hmacKey, aesKey };
+}
+
+
 	static async init(password) {
-		throw "Not Implemented!";
+	 if (typeof password !== "string" || password.length === 0) {
+    throw new Error("Password must be a non-empty string.");
+  }
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    throw new Error("Password too long.");
+  }
+
+  const salt = getRandomBytes(16);
+  let derived;
+    try {
+      derived = await Keychain._deriveKeysFromPassword(password, salt);
+    } catch (err) {
+      throw new Error("Key derivation failed during init(): " + err.message);
+    }
+
+    return new Keychain(password, salt, derived.masterKey, derived.hmacKey, derived.aesKey);
+  
+		
 	}
 
 	/**
