@@ -120,6 +120,7 @@ class Keychain {
 		throw "Not Implemented!";
 	};
 
+
 	/*
 	Internal Helper I:
 	* Ensures the KVS object exists and is stored in a serializable location
@@ -137,6 +138,7 @@ class Keychain {
 		return this.data.kvs;
 	}
 
+
 	/*
 	Internal Helper II:
 	* Pads a password to a fixed length of 64 characters to avoid leaking password lengths
@@ -152,6 +154,7 @@ class Keychain {
 		return value.padEnd(maxLen, "\0");
 	}
 
+
 	/*
 	Internal Helper III:
 	* Removes null character padding on decrypted passwords
@@ -159,6 +162,7 @@ class Keychain {
 	unpadPassword(padded) {
 		return padded.replace(/\0+$/g, "");
 	}
+
 
 	/*
 	Internal Helper IV:
@@ -182,6 +186,53 @@ class Keychain {
 
 		// Base64-encoded HMAC
 		return encodeBuffer(macBuf);
+	}
+
+
+	/*
+	Internal Helper V:
+	* Encrypt a value (password) for a given domain.
+	* Pads the password to fixed length.
+	* Computes HMAC(domain) and uses it as AAD in AES-GCM.
+	* Returns { tagB64, record } where:
+	*     tagB64 = Base64(HMAC(domain))
+	*     record = { iv: <Base64>, ciphertext: <Base64> }
+	*/
+	async encryptForDomain(name, value) {
+		if (!this.secrets.aesKey) {
+			throw new Error("AES key not initialized");
+		}
+
+		// Deriving the domain tag = HMAC(domain), as Base64 string
+		const tagB64 = await this.domainToTag(name);
+		const tagBuf = decodeBuffer(tagB64);
+
+		// Padding the password to hide its true length
+		const padded = this.padPassword(value);
+		const plaintextBuf = stringToBuffer(padded);
+
+		// Generating a random IV (12 bytes = 96 bits)
+		const ivBuf = getRandomBytes(12);
+
+		// Encrypting with AES-GCM
+		const ciphertextBuf = await subtle.encrypt(
+			{
+				name: "AES-GCM",
+				iv: ivBuf,
+				additionalData: tagBuf,
+				tagLength: 128
+			},
+			this.secrets.aesKey,
+			plaintextBuf
+		);
+
+		// Building the record with Base64 encoding (JSON-friendly)
+		const record = {
+			iv: encodeBuffer(ivBuf),
+			ciphertext: encodeBuffer(ciphertextBuf)
+		};
+
+		return { tagB64, record };
 	}
 };
 
