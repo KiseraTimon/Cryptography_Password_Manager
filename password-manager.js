@@ -81,32 +81,44 @@ class Keychain {
 		throw "Not Implemented!";
 	};
 
-	/**
-	  * Fetches the data (as a string) corresponding to the given domain from the KVS.
-	  * If there is no entry in the KVS that matches the given domain, then return
-	  * null.
-	  *
-	  * Arguments:
-	  *   name: string
-	  * Return Type: Promise<string>
-	  */
+
+	/*
+		* Fetches the data (as a string) corresponding to the given domain from the KVS.
+		* If there is no entry in the KVS that matches the given domain, then return
+		* null.
+		*
+		* Arguments:
+		*   name: string
+		* Return Type: Promise<string>
+	*/
 	async get(name) {
-		throw "Not Implemented!";
+		const kvs = this.getKvs();
+		const tagB64 = await this.domainToTag(name);
+		const record = kvs[tagB64];
+		if (!record) {
+			return null;
+		}
+		const value = await this.decryptForDomain(name, record);
+		return value;
 	};
 
-	/** 
-	* Inserts the domain and associated data into the KVS. If the domain is
-	* already in the password manager, this method should update its value. If
-	* not, create a new entry in the password manager.
-	*
-	* Arguments:
-	*   name: string
-	*   value: string
-	* Return Type: void
-	*/
+
+	/*
+		 * Inserts the domain and associated data into the KVS. If the domain is
+		 * already in the password manager, this method should update its value. If
+		 * not, create a new entry in the password manager.
+		 *
+		 * Arguments:
+		 *   name: string
+		 *   value: string
+		 * Return Type: void
+	 */
 	async set(name, value) {
-		throw "Not Implemented!";
+		const kvs = this.getKvs();
+		const { tagB64, record } = await this.encryptForDomain(name, value);
+		kvs[tagB64] = record;
 	};
+
 
 	/**
 	  * Removes the record with name from the password manager. Returns true
