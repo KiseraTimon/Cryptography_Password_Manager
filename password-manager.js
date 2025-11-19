@@ -107,25 +107,66 @@ class Keychain {
 
 
 	static async init(password) {
-	 if (typeof password !== "string" || password.length === 0) {
-    throw new Error("Password must be a non-empty string.");
-  }
-  if (password.length > MAX_PASSWORD_LENGTH) {
-    throw new Error("Password too long.");
-  }
-
-  const salt = getRandomBytes(16);
-  let derived;
-    try {
-      derived = await Keychain._deriveKeysFromPassword(password, salt);
-    } catch (err) {
-      throw new Error("Key derivation failed during init(): " + err.message);
+    if (typeof password !== "string" || password.length === 0) {
+        throw new Error("Password must be a non-empty string.");
+    }
+    if (password.length > MAX_PASSWORD_LENGTH) {
+        throw new Error("Password too long.");
     }
 
-    return new Keychain(password, salt, derived.masterKey, derived.hmacKey, derived.aesKey);
-  
-		
-	}
+    // ---- Generate salt ----
+    const salt = getRandomBytes(16);  // 128-bit salt
+
+    let derived;
+    try {
+        const masterKey = await subtle.importKey(
+            "raw",
+            stringToBuffer(password),
+            { name: "PBKDF2" },
+            false,
+            ["deriveBits"]
+        );
+
+        const derivedBits = await subtle.deriveBits(
+            {
+                name: "PBKDF2",
+                salt: salt,
+                iterations: PBKDF2_ITERATIONS,
+                hash: "SHA-256"
+            },
+            masterKey,
+            256 * 2 // 32 bytes for HMAC + 32 bytes for AES
+        );
+
+        const derivedArray = new Uint8Array(derivedBits);
+        const hmacKeyRaw = derivedArray.slice(0, 32);
+        const aesKeyRaw = derivedArray.slice(32, 64);
+
+        const hmacKey = await subtle.importKey(
+            "raw",
+            hmacKeyRaw,
+            { name: "HMAC", hash: "SHA-256" },
+            false,
+            ["sign"]
+        );
+
+        const aesKey = await subtle.importKey(
+            "raw",
+            aesKeyRaw,
+            { name: "AES-GCM" },
+            false,
+            ["encrypt", "decrypt"]
+        );
+
+        derived = { hmacKey, aesKey };
+    } catch (err) {
+        throw new Error("Key derivation failed during init(): " + err.message);
+    }
+
+    // ---- Return new Keychain instance ----
+    return new Keychain(salt, {}, derived.hmacKey, derived.aesKey);
+}
+
 
 	/**
 	  * Loads the keychain state from the provided representation (repr). The
@@ -145,8 +186,67 @@ class Keychain {
 	  * Return Type: Keychain
 	  */
 	static async load(password, repr, trustedDataCheck) {
-		throw "Not Implemented!";
-	};
+    // Verify integrity checksum (rollback protection)
+    if (trustedDataCheck) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(repr);
+        const hashBuf = await subtle.digest("SHA-256", data);
+
+        const computed = encodeBuffer(hashBuf);
+        if (computed !== trustedDataCheck) {
+            throw new Error("Integrity check failed: rollback attack detected");
+        }
+    }
+
+    // Parse JSON
+    const obj = JSON.parse(repr);
+    const salt = decodeBuffer(obj.salt);
+    const kvs = obj.kvs || {};
+
+    // Derive keys again from password + salt
+    const masterKey = await subtle.importKey(
+        "raw",
+        stringToBuffer(password),
+        { name: "PBKDF2" },
+        false,
+        ["deriveBits"]
+    );
+
+    const derivedBits = await subtle.deriveBits(
+        {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: PBKDF2_ITERATIONS,
+            hash: "SHA-256"
+        },
+        masterKey,
+        256 * 2
+    );
+
+    const derived = new Uint8Array(derivedBits);
+    const hmacKeyRaw = derived.slice(0, 32);
+    const aesKeyRaw = derived.slice(32, 64);
+
+    const hmacKey = await subtle.importKey(
+        "raw",
+        hmacKeyRaw,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+    );
+
+    const aesKey = await subtle.importKey(
+        "raw",
+        aesKeyRaw,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt", "decrypt"]
+    );
+
+    // Return reconstructed Keychain
+    return new Keychain(salt, kvs, hmacKey, aesKey);
+}
+
 
 	/**
 	  * Returns a JSON serialization of the contents of the keychain that can be 
@@ -161,8 +261,23 @@ class Keychain {
 	  * Return Type: array
 	  */
 	async dump() {
-		throw "Not Implemented!";
-	};
+    const reprObj = {
+        salt: encodeBuffer(this.data.salt),
+        kvs: this.data.kvs
+    };
+
+    const jsonStr = JSON.stringify(reprObj);
+
+    const encoder = new TextEncoder();
+    const data = encoder.encode(jsonStr);
+
+    const hashBuf = await subtle.digest("SHA-256", data);
+    const hash = encodeBuffer(hashBuf);  // return Base64
+
+    // Return serialized data + integrity checksum
+    return [jsonStr, hash];
+}
+
 
 
 	/*
