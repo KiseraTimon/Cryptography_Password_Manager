@@ -120,16 +120,23 @@ class Keychain {
 	};
 
 
-	/**
-	  * Removes the record with name from the password manager. Returns true
-	  * if the record with the specified name is removed, false otherwise.
-	  *
-	  * Arguments:
-	  *   name: string
-	  * Return Type: Promise<boolean>
+	/*
+		* Removes the record with name from the password manager. Returns true
+		* if the record with the specified name is removed, false otherwise.
+		*
+		* Arguments:
+		*   name: string
+		* Return Type: Promise<boolean>
 	*/
 	async remove(name) {
-		throw "Not Implemented!";
+		const kvs = this.getKvs();
+		const tagB64 = await this.domainToTag(name);
+
+		if (Object.prototype.hasOwnProperty.call(kvs, tagB64)) {
+			delete kvs[tagB64];
+			return true;
+		}
+		return false;
 	};
 
 
