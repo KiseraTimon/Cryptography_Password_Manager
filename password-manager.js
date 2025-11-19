@@ -151,6 +151,14 @@ class Keychain {
 
 		return value.padEnd(maxLen, "\0");
 	}
+
+	/*
+	Internal Helper III:
+	* Removes null character padding on decrypted passwords
+	*/
+	unpadPassword(padded) {
+		return padded.replace(/\0+$/g, "");
+	}
 };
 
 module.exports = { Keychain }
