@@ -15,268 +15,301 @@ class Keychain {
 	/**
 	 * Initializes the keychain using the provided information. Note that external
 	 * users should likely never invoke the constructor directly and instead use
-	 * either Keychain.init or Keychain.load. 
+	 * either Keychain.init or Keychain.load.
 	 * Arguments:
-	 *  You may design the constructor with any parameters you would like. 
+	 *  You may design the constructor with any parameters you would like.
 	 * Return Type: void
 	 */
-	constructor() {
+	constructor(salt, kvs, hmacKey, aesKey) {
 		this.data = {
-			/* Store member variables that you intend to be public here
-			   (i.e. information that will not compromise security if an adversary sees) */
-			   kvs:{},
-               salt: encodeBuffer(salt)
+			kvs: kvs || {},
+			salt: encodeBuffer(salt)
 		};
 		this.secrets = {
-			/* Store member variables that you intend to be private here
-			   (information that an adversary should NOT see). */
-			 masterPassword: password,
-             masterKey: masterKey,
-             hmacKey: hmacKey,
-             aesKey: aesKey
+			hmacKey: hmacKey,
+			aesKey: aesKey
 		};
 
 	};
 
-	/** 
-	  * Creates an empty keychain with the given password.
-	  *
-	  * Arguments:
-	  *   password: string
-	  * Return Type: void
-	  */
-	 static async _deriveKeysFromPassword(password, salt) {
-  /*1. Import raw password as PBKDF2 input key */
-    if (typeof password !== "string") throw new TypeError("password must be a string");
-    if (!(salt instanceof Uint8Array)) throw new TypeError("salt must be a Uint8Array");
+	/*
+		* Creates an empty keychain with the given password.
+		*
+		* Arguments:
+		*   password: string
+		* Return Type: void
+	*/
+	static async _deriveKeysFromPassword(password, salt) {
+		// Importing raw password as PBKDF2 input key
+		if (typeof password !== "string") throw new TypeError("password must be a string");
+		if (!(salt instanceof Uint8Array)) throw new TypeError("salt must be a Uint8Array");
 
-  const passwordKey = await subtle.importKey(
-    "raw",
-    stringToBuffer(password),
-    "PBKDF2",
-    false,
-    ["deriveKey"]
-  );
+		const passwordKey = await subtle.importKey(
+			"raw",
+			stringToBuffer(password),
+			"PBKDF2",
+			false,
+			["deriveKey"]
+		);
 
-  // 2. Derive master HMAC key using PBKDF2
-  const masterKey = await subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: "SHA-256"
-    },
-    passwordKey,
-    { name: "HMAC", hash: "SHA-256", length: 256 },
-    true,
-    ["sign"]
-  );
+		// Deriving master HMAC key using PBKDF2
+		const masterKey = await subtle.deriveKey(
+			{
+				name: "PBKDF2",
+				salt: salt,
+				iterations: PBKDF2_ITERATIONS,
+				hash: "SHA-256"
+			},
+			passwordKey,
+			{ name: "HMAC", hash: "SHA-256", length: 256 },
+			true,
+			["sign"]
+		);
 
-  // 3. Derive HMAC subkey
-  const hmacKeyBytes = await subtle.sign(
-    "HMAC",
-    masterKey,
-    stringToBuffer("hmac-key-destination")
-  );
+		// Deriving HMAC subkey
+		const hmacKeyBytes = await subtle.sign(
+			"HMAC",
+			masterKey,
+			stringToBuffer("hmac-key-destination")
+		);
 
-  const hmacKey = await subtle.importKey(
-    "raw",
-    hmacKeyBytes,
-    { name: "HMAC", hash: "SHA-256" },
-    true,
-    ["sign", "verify"]
-  );
+		const hmacKey = await subtle.importKey(
+			"raw",
+			hmacKeyBytes,
+			{ name: "HMAC", hash: "SHA-256" },
+			true,
+			["sign", "verify"]
+		);
 
-  // 4. Derive AES-GCM subkey
-  const aesKeyBytes = await subtle.sign(
-    "HMAC",
-    masterKey,
-    stringToBuffer("aes-key-destination")
-  );
+		// Deriving AES-GCM subkey
+		const aesKeyBytes = await subtle.sign(
+			"HMAC",
+			masterKey,
+			stringToBuffer("aes-key-destination")
+		);
 
-  const aesKey = await subtle.importKey(
-    "raw",
-    aesKeyBytes,
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"]
-  );
+		const aesKey = await subtle.importKey(
+			"raw",
+			aesKeyBytes,
+			{ name: "AES-GCM", length: 256 },
+			true,
+			["encrypt", "decrypt"]
+		);
 
-  return { masterKey, hmacKey, aesKey };
-}
+		return { masterKey, hmacKey, aesKey };
+	}
 
 
 	static async init(password) {
-    if (typeof password !== "string" || password.length === 0) {
-        throw new Error("Password must be a non-empty string.");
-    }
-    if (password.length > MAX_PASSWORD_LENGTH) {
-        throw new Error("Password too long.");
-    }
+		if (typeof password !== "string" || password.length === 0) {
+			throw new Error("Password must be a non-empty string.");
+		}
+		if (password.length > MAX_PASSWORD_LENGTH) {
+			throw new Error("Password too long.");
+		}
 
-    // ---- Generate salt ----
-    const salt = getRandomBytes(16);  // 128-bit salt
+		// Generating 128-bit salt
+		const salt = getRandomBytes(16);
 
-    let derived;
-    try {
-        const masterKey = await subtle.importKey(
-            "raw",
-            stringToBuffer(password),
-            { name: "PBKDF2" },
-            false,
-            ["deriveBits"]
-        );
+		let derived;
+		try {
+			const masterKey = await subtle.importKey(
+				"raw",
+				stringToBuffer(password),
+				{ name: "PBKDF2" },
+				false,
+				["deriveBits"]
+			);
 
-        const derivedBits = await subtle.deriveBits(
-            {
-                name: "PBKDF2",
-                salt: salt,
-                iterations: PBKDF2_ITERATIONS,
-                hash: "SHA-256"
-            },
-            masterKey,
-            256 * 2 // 32 bytes for HMAC + 32 bytes for AES
-        );
+			const derivedBits = await subtle.deriveBits(
+				{
+					name: "PBKDF2",
+					salt: salt,
+					iterations: PBKDF2_ITERATIONS,
+					hash: "SHA-256"
+				},
+				masterKey,
 
-        const derivedArray = new Uint8Array(derivedBits);
-        const hmacKeyRaw = derivedArray.slice(0, 32);
-        const aesKeyRaw = derivedArray.slice(32, 64);
+				// 32 bytes for HMAC + 32 bytes for AES
+				256 * 2
+			);
 
-        const hmacKey = await subtle.importKey(
-            "raw",
-            hmacKeyRaw,
-            { name: "HMAC", hash: "SHA-256" },
-            false,
-            ["sign"]
-        );
+			const derivedArray = new Uint8Array(derivedBits);
+			const hmacKeyRaw = derivedArray.slice(0, 32);
+			const aesKeyRaw = derivedArray.slice(32, 64);
 
-        const aesKey = await subtle.importKey(
-            "raw",
-            aesKeyRaw,
-            { name: "AES-GCM" },
-            false,
-            ["encrypt", "decrypt"]
-        );
+			const hmacKey = await subtle.importKey(
+				"raw",
+				hmacKeyRaw,
+				{ name: "HMAC", hash: "SHA-256" },
+				false,
+				["sign"]
+			);
 
-        derived = { hmacKey, aesKey };
-    } catch (err) {
-        throw new Error("Key derivation failed during init(): " + err.message);
-    }
+			const aesKey = await subtle.importKey(
+				"raw",
+				aesKeyRaw,
+				{ name: "AES-GCM" },
+				false,
+				["encrypt", "decrypt"]
+			);
 
-    // ---- Return new Keychain instance ----
-    return new Keychain(salt, {}, derived.hmacKey, derived.aesKey);
-}
+			derived = { hmacKey, aesKey };
+		}
+
+		// Handling exceptions
+		catch (err) {
+			throw new Error("Key derivation failed during init(): " + err.message);
+		}
+
+		// Returning new Keychain instance
+		return new Keychain(salt, {}, derived.hmacKey, derived.aesKey);
+	}
 
 
-	/**
-	  * Loads the keychain state from the provided representation (repr). The
-	  * repr variable will contain a JSON encoded serialization of the contents
-	  * of the KVS (as returned by the dump function). The trustedDataCheck
-	  * is an *optional* SHA-256 checksum that can be used to validate the 
-	  * integrity of the contents of the KVS. If the checksum is provided and the
-	  * integrity check fails, an exception should be thrown. You can assume that
-	  * the representation passed to load is well-formed (i.e., it will be
-	  * a valid JSON object).Returns a Keychain object that contains the data
-	  * from repr. 
-	  *
-	  * Arguments:
-	  *   password:           string
-	  *   repr:               string
-	  *   trustedDataCheck: string
-	  * Return Type: Keychain
-	  */
+	/*
+		* Loads the keychain state from the provided representation (repr). The
+		* repr variable will contain a JSON encoded serialization of the contents
+		* of the KVS (as returned by the dump function). The trustedDataCheck
+		* is an *optional* SHA-256 checksum that can be used to validate the
+		* integrity of the contents of the KVS. If the checksum is provided and the
+		* integrity check fails, an exception should be thrown. You can assume that
+		* the representation passed to load is well-formed (i.e., it will be
+		* a valid JSON object).Returns a Keychain object that contains the data
+		* from repr.
+		*
+		* Arguments:
+		*   password:           string
+		*   repr:               string
+		*   trustedDataCheck: string
+		* Return Type: Keychain
+	*/
 	static async load(password, repr, trustedDataCheck) {
-    // Verify integrity checksum (rollback protection)
-    if (trustedDataCheck) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(repr);
-        const hashBuf = await subtle.digest("SHA-256", data);
+		// Verifying integrity of checksum for rollback protection
+		if (trustedDataCheck) {
+			const encoder = new TextEncoder();
+			const data = encoder.encode(repr);
+			const hashBuf = await subtle.digest("SHA-256", data);
 
-        const computed = encodeBuffer(hashBuf);
-        if (computed !== trustedDataCheck) {
-            throw new Error("Integrity check failed: rollback attack detected");
-        }
-    }
+			const computed = encodeBuffer(hashBuf);
+			if (computed !== trustedDataCheck) {
+				throw new Error("Integrity check failed: rollback attack detected");
+			}
+		}
 
-    // Parse JSON
-    const obj = JSON.parse(repr);
-    const salt = decodeBuffer(obj.salt);
-    const kvs = obj.kvs || {};
+		// Parsing JSON
+		const obj = JSON.parse(repr);
+		const salt = decodeBuffer(obj.salt);
+		const kvs = obj.kvs || {};
 
-    // Derive keys again from password + salt
-    const masterKey = await subtle.importKey(
-        "raw",
-        stringToBuffer(password),
-        { name: "PBKDF2" },
-        false,
-        ["deriveBits"]
-    );
+		// Deriving keys again from password + salt
+		const masterKey = await subtle.importKey(
+			"raw",
+			stringToBuffer(password),
+			{ name: "PBKDF2" },
+			false,
+			["deriveBits"]
+		);
 
-    const derivedBits = await subtle.deriveBits(
-        {
-            name: "PBKDF2",
-            salt: salt,
-            iterations: PBKDF2_ITERATIONS,
-            hash: "SHA-256"
-        },
-        masterKey,
-        256 * 2
-    );
+		const derivedBits = await subtle.deriveBits(
+			{
+				name: "PBKDF2",
+				salt: salt,
+				iterations: PBKDF2_ITERATIONS,
+				hash: "SHA-256"
+			},
+			masterKey,
+			256 * 2
+		);
 
-    const derived = new Uint8Array(derivedBits);
-    const hmacKeyRaw = derived.slice(0, 32);
-    const aesKeyRaw = derived.slice(32, 64);
+		const derived = new Uint8Array(derivedBits);
+		const hmacKeyRaw = derived.slice(0, 32);
+		const aesKeyRaw = derived.slice(32, 64);
 
-    const hmacKey = await subtle.importKey(
-        "raw",
-        hmacKeyRaw,
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"]
-    );
+		const hmacKey = await subtle.importKey(
+			"raw",
+			hmacKeyRaw,
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["sign"]
+		);
 
-    const aesKey = await subtle.importKey(
-        "raw",
-        aesKeyRaw,
-        { name: "AES-GCM" },
-        false,
-        ["encrypt", "decrypt"]
-    );
+		const aesKey = await subtle.importKey(
+			"raw",
+			aesKeyRaw,
+			{ name: "AES-GCM" },
+			false,
+			["encrypt", "decrypt"]
+		);
 
-    // Return reconstructed Keychain
-    return new Keychain(salt, kvs, hmacKey, aesKey);
-}
+		const kvsTags = Object.keys(kvs);
+		if (kvsTags.length > 0) {
+			const tag = kvsTags[0];
+			const record = kvs[tag];
+
+			try {
+				// Decryption test
+				const tagBuf = encodeBuffer(tag);
+				const decrypted = await subtle.decrypt(
+					{
+						name: "AES-GCM",
+						iv: decodeBuffer(record.iv),
+						additionalData: decodeBuffer(tag),
+						tagLength: 128
+					},
+					aesKey,
+					decodeBuffer(record.ciphertext)
+				);
+				// If decryption succeeds, password is correct
+			}
+
+			catch (e) {
+				// Wrong password
+				if (trustedDataCheck) {
+					throw new Error("Incorrect password");
+				}
+
+				// If no checksum, returning false is OK
+				return false;
+			}
+		}
+
+		// Returning reconstructed keychain
+		return new Keychain(salt, kvs, hmacKey, aesKey);
+	}
 
 
-	/**
-	  * Returns a JSON serialization of the contents of the keychain that can be 
-	  * loaded back using the load function. The return value should consist of
-	  * an array of two strings:
-	  *   arr[0] = JSON encoding of password manager
-	  *   arr[1] = SHA-256 checksum (as a string)
-	  * As discussed in the handout, the first element of the array should contain
-	  * all of the data in the password manager. The second element is a SHA-256
-	  * checksum computed over the password manager to preserve integrity.
-	  *
-	  * Return Type: array
-	  */
+	/*
+		* Returns a JSON serialization of the contents of the keychain that can be
+		* loaded back using the load function. The return value should consist of
+		* an array of two strings:
+		*   arr[0] = JSON encoding of password manager
+		*   arr[1] = SHA-256 checksum (as a string)
+		* As discussed in the handout, the first element of the array should contain
+		* all of the data in the password manager. The second element is a SHA-256
+		* checksum computed over the password manager to preserve integrity.
+		*
+		* Return Type: array
+	*/
 	async dump() {
-    const reprObj = {
-        salt: encodeBuffer(this.data.salt),
-        kvs: this.data.kvs
-    };
+		const reprObj = {
+			salt: this.data.salt,
+			kvs: this.data.kvs
+		};
 
-    const jsonStr = JSON.stringify(reprObj);
+		const jsonStr = JSON.stringify(reprObj);
 
-    const encoder = new TextEncoder();
-    const data = encoder.encode(jsonStr);
+		const encoder = new TextEncoder();
+		const data = encoder.encode(jsonStr);
 
-    const hashBuf = await subtle.digest("SHA-256", data);
-    const hash = encodeBuffer(hashBuf);  // return Base64
+		const hashBuf = await subtle.digest("SHA-256", data);
 
-    // Return serialized data + integrity checksum
-    return [jsonStr, hash];
-}
+		// returning Base64
+		const hash = encodeBuffer(hashBuf);
+
+		// Returning serialized data + integrity checksum
+		return [jsonStr, hash];
+	}
 
 
 
@@ -395,7 +428,7 @@ class Keychain {
 
 		const nameBuf = stringToBuffer(name);
 		const macBuf = await subtle.sign(
-			// The key already encodes algo/hash
+			// The key already encodes the hash
 			{ name: "HMAC" },
 			this.secrets.hmacKey,
 			nameBuf
