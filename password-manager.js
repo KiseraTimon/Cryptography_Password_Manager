@@ -159,6 +159,30 @@ class Keychain {
 	unpadPassword(padded) {
 		return padded.replace(/\0+$/g, "");
 	}
+
+	/*
+	Internal Helper IV:
+	* Compute HMAC(domain) and return it as a Base64 string.
+	* This value is to be used both:
+	*   - as the KVS key (to hide domain names)
+	*   - as associatedData (AAD) in AES-GCM to prevent swap attacks.
+	*/
+	async domainToTag(name) {
+		if (!this.secrets.hmacKey) {
+			throw new Error("HMAC key not initialized");
+		}
+
+		const nameBuf = stringToBuffer(name);
+		const macBuf = await subtle.sign(
+			// The key already encodes algo/hash
+			{ name: "HMAC" },
+			this.secrets.hmacKey,
+			nameBuf
+		);
+
+		// Base64-encoded HMAC
+		return encodeBuffer(macBuf);
+	}
 };
 
 module.exports = { Keychain }
