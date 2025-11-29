@@ -200,6 +200,7 @@ class Keychain {
 		const kvs = this.getKvs();
 		const { tagB64, record } = await this.encryptForDomain(name, value);
 		kvs[tagB64] = record;
+		alert("Password saved successfully.");
 	};
 
 
